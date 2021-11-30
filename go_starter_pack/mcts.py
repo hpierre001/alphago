@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-''' This is the famous random player which (almost) always looses.
+'''
 '''
 
 import Goban
@@ -91,7 +91,7 @@ class Node():
         N = 0
         for move, child in self._children.items():
             N += np.power(child._stats["n"], 1/tau)
-        return rd.choices(list(self._children), wheights=[child._stats[p] * child._stats["n"]/N for child in self._children])[0]
+        return self._children[rd.choices(list(self._children), weights=[child._stats["p"] * np.power(child._stats["n"], 1/tau)/N for child in self._children.values()])[0]]
 
 
 class myPlayer(PlayerInterface):
@@ -111,7 +111,12 @@ class myPlayer(PlayerInterface):
     def _rollout(self):
         count = 0
         while not self._board.is_game_over():
-            self._board.push(rd.choice(self._board.legal_moves()))
+            moves = self._board.weak_legal_moves()
+            rd.shuffle(moves)
+            i = 0
+            while not self._board.push(moves[i]):
+                self._board.pop()
+                i+=1
             count+=1
 
         ans = int(self._board.final_go_score()[0].lower() == self._mycolor)
@@ -129,13 +134,13 @@ class myPlayer(PlayerInterface):
             self._board.push(node.getMove())
             count += 1
 
-        moves = self._board.legal_moves()
+        moves = self._board.weak_legal_moves()
         for move in moves:
-            self._node.addStat("n", 1)
-            node = self._node.addChild(move)
-            node.addStat("n", 1)
-            self._board.push(move)
-            node.addStat("w", self._rollout())
+            if self._board.push(move):
+                self._node.addStat("n", 1)
+                node = self._node.addChild(move)
+                node.addStat("n", 1)
+                node.addStat("w", self._rollout())
             self._board.pop()
 
         for i in range(count):
@@ -144,11 +149,11 @@ class myPlayer(PlayerInterface):
             node = node.getParent()
             self._board.pop()
 
-    def _getNode(self, simulation = 5):
+    def _getNode(self, simulation = 100):
         for i in range(simulation):
             self._buildTree()
 
-        return self._node.getBetterChild()
+        return self._node.getBetterChild(tau=1)
 
     def getPlayerMove(self):
         if self._board.is_game_over():
