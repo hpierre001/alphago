@@ -149,7 +149,7 @@ class myPlayer(PlayerInterface):
             node = node.getParent()
             self._board.pop()
 
-    def _getNode(self, simulation = 100):
+    def _getNode(self, simulation = 10):
         for i in range(simulation):
             self._buildTree()
 
