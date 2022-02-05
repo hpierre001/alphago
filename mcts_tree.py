@@ -9,7 +9,7 @@ class Node():
         self._children = {}
         self._stats = {"p":p, "n":n, "w":w}
 
-    def addChild(self, move):
+    def addChild(self, move, p=1, n=0, w=0):
         self._children[move] = Node(move, self)
         return self._children[move]
 

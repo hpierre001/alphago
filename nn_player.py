@@ -8,41 +8,53 @@ from playerInterface import *
 import matplotlib.pyplot as plt
 import random as rd
 import numpy as np
+import torch
 
 from mcts_tree import Node
+import AlphaZeroNet as azn
 
 C_PUCT = 1
+
+torch.no_grad()
 
 class myPlayer(PlayerInterface):
 
     def __init__(self):
         self._board = Goban.Board()
         self._mycolor = None
+        self._opponent = None
+        self._history = None
+        self._save_history = None
         self._node = Node()
+        self._net = azn.Net()
+        self._net.load_state_dict(torch.load("model/model_60.pt"))
+        self._net.eval()
+        self.softmax = torch.nn.Softmax(dim=0)
 
     def getPlayerName(self):
-        return "MCTS Go Player"
+        return "NN guided MCTS Go Player"
 
-    def _rollout(self):
-        count = 0
-        while not self._board.is_game_over():
-            moves = self._board.weak_legal_moves()
-            rd.shuffle(moves)
-            i = 0
-            while not self._board.push(moves[i]):
-                self._board.pop()
-                i+=1
-            count+=1
-
-        ans = int(self._board.final_go_score()[0].lower() == self._mycolor)
-
-        for i in range(count):
-            self._board.pop()
-
-        return ans
+    #def _rollout(self):
+    #    count = 0
+    #    while not self._board.is_game_over():
+    #        moves = self._board.weak_legal_moves()
+    #        rd.shuffle(moves)
+    #        i = 0
+    #        while not self._board.push(moves[i]):
+    #            self._board.pop()
+    #            i+=1
+    #        count+=1
+    #
+    #    ans = int(self._board.final_go_score()[0].lower() == self._mycolor)
+    #
+    #    for i in range(count):
+    #        self._board.pop()
+    #
+    #    return ans
 
     def _buildTree(self):
-        """ Build MCTS tree """
+        """ Build MCTS tree"""
+        self._save_history = self._history.clone()
 
         # Come down to a leaf
         count = 0
@@ -50,17 +62,32 @@ class myPlayer(PlayerInterface):
         while not node.isLeaf:
             node = node.randChild()
             self._board.push(node.getMove())
+            self._update_history()
             count += 1
 
-        # roll out once every child of this leaf
+        # use net to predict policy and value
+        p, v = self._net(self._history)
+        p = p[0]
+        v = v[0]
+
         moves = self._board.weak_legal_moves()
+
+        # change logit to 0 for illegal move
+        not_legal = [True]*82
+        for move in moves:
+            not_legal[move] = False
+        p[not_legal] = 0
+
+        p = self.softmax(p)
+
         for move in moves:
             if self._board.push(move):
                 self._node.addStat("n", 1)
-                node = self._node.addChild(move)
+                node = self._node.addChild(move, p=p[move].item())
                 node.addStat("n", 1)
-                node.addStat("w", self._rollout())
             self._board.pop()
+
+        node.addStat("w", v.item())
 
         # update every node while coming up to the current node
         for i in range(count):
@@ -69,11 +96,29 @@ class myPlayer(PlayerInterface):
             node = node.getParent()
             self._board.pop()
 
-    def _getNode(self, simulation = 10):
+        self._history = self._save_history
+
+    def _getNode(self, simulation = 20):
         for i in range(simulation):
             self._buildTree()
 
         return self._node.getBetterChild(tau=1)
+
+    def _update_history(self):
+        player_stones, other_stones = self._unflatten_board()
+        self._history[2:14] = self._history[:12]
+        self._history[0] = player_stones
+        self._history[1] = other_stones
+
+    def _unflatten_board(self):
+        player_stones = torch.zeros((9,9), dtype=self.dtype)
+        other_stones = torch.zeros((9,9), dtype=self.dtype)
+        for i, stone in enumerate(self._board._board):
+            if stone == self._mycolor:
+                player_stones[i//9, i%9] = 1
+            elif stone == self._opponent:
+                other_stones[i//9, i%9] = 1
+        return player_stones, other_stones
 
     def getPlayerMove(self):
         if self._board.is_game_over():
@@ -101,6 +146,9 @@ class myPlayer(PlayerInterface):
     def newGame(self, color):
         self._mycolor = color
         self._opponent = Goban.Board.flip(color)
+        self._history = torch.zeros(1, 15, 9, 9)
+        if color == 2:
+            self._history[:,-1,:,:]=torch.ones(9, 9)
 
     def endGame(self, winner):
         if self._mycolor == winner:
